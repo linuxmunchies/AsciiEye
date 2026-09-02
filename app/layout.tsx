@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://unidentified-signal.vimmdim.chatgpt.site'),
   title: 'Unidentified Signal',
   description: 'A personal transmission from an unidentified signal.',
   openGraph: {
