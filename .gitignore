@@ -11,10 +11,14 @@
 # testing
 /coverage
 
-# next.js
+# next.js / vinext
 /.next/
 /.vinext/
 /out/
+*.tsbuildinfo
+
+# local runner
+/.run/
 
 # misc
 .DS_Store
