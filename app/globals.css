@@ -120,8 +120,7 @@ a { color: inherit; }
 }
 
 .eye-shell,
-.eye-iris,
-.eye-drip {
+.eye-iris {
   margin: 0;
   padding: 0;
   font-family: var(--mono);
@@ -175,23 +174,12 @@ a { color: inherit; }
   opacity: .3;
 }
 
-.eye-drip {
+.orbital-nav {
   position: absolute;
-  z-index: 1;
-  font-size: clamp(5px, 1.1vw, 10px);
-  line-height: 1.04;
-  color: color-mix(in srgb, var(--eye-default) 76%, transparent);
-  opacity: .55;
+  z-index: 6;
+  inset: 0;
+  pointer-events: none;
 }
-
-@supports (font-size: 1cqw) {
-  .eye-drip { font-size: clamp(5px, 1.05cqw, 10px); }
-}
-
-.eye-drip--left { top: 72%; left: 18%; }
-.eye-drip--right { top: 71%; right: 18%; }
-
-.orbital-nav { position: absolute; z-index: 6; inset: 0; }
 
 .orbit-link {
   --link-accent: var(--eye-default);
@@ -211,6 +199,7 @@ a { color: inherit; }
   text-decoration: none;
   text-shadow: 0 0 8px transparent;
   opacity: .88;
+  pointer-events: auto;
   transform: var(--orbit-position);
   transition: color 65ms steps(2, end), opacity 90ms linear, text-shadow 90ms linear, transform 85ms steps(2, end);
 }
@@ -385,11 +374,6 @@ a { color: inherit; }
   animation-delay: calc(250ms + var(--row-from-center, 0) * 34ms);
 }
 
-.is-booting .eye-drip {
-  opacity: 0;
-  animation: awaken-menu 280ms 980ms cubic-bezier(.2, .7, .2, 1) forwards;
-}
-
 .is-booting .orbit-link {
   opacity: 0;
   animation: awaken-menu 360ms cubic-bezier(.2, .72, .2, 1) forwards;
@@ -533,8 +517,6 @@ a { color: inherit; }
   .orbit-link--photography { top: 78%; right: auto; left: 0; }
   .orbit-link--music { top: 78%; right: 1%; left: auto; }
   .faint-axis--horizontal { left: 4%; width: 92%; }
-  .eye-drip--left { left: 6%; }
-  .eye-drip--right { right: 6%; }
 }
 
 @media (max-width: 400px) {

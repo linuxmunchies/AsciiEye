@@ -35,8 +35,6 @@ export function Eye({ rows, irisRows, desyncRows = [] }: EyeProps) {
           </span>
         ))}
       </pre>
-      <pre className="eye-drip eye-drip--left" aria-hidden="true">{':: |\n   1\n |\n :\n .'}</pre>
-      <pre className="eye-drip eye-drip--right" aria-hidden="true">{'| ::\n0\n   : |\n     .\n     |'}</pre>
     </div>
   );
 }

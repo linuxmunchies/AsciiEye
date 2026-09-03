@@ -148,31 +148,12 @@ const rollIdle = (rows: string[]): IdleRoll => {
 };
 
 const firstIdleDelay = () => 2600 + Math.random() * 4200;
-const RETURN_FLAG = 'ascii-eye-return';
+const LOOK_BACK_MS = 3200;
+const ARMED_LOOK_BACK_MS = 7000;
+const BOOT_MS = 1320;
 
-const readReturnFlag = () => {
-  try {
-    return sessionStorage.getItem(RETURN_FLAG) === '1';
-  } catch {
-    return false;
-  }
-};
-
-const writeReturnFlag = () => {
-  try {
-    sessionStorage.setItem(RETURN_FLAG, '1');
-  } catch {
-    /* ignore quota / private mode */
-  }
-};
-
-const clearReturnFlag = () => {
-  try {
-    sessionStorage.removeItem(RETURN_FLAG);
-  } catch {
-    /* ignore */
-  }
-};
+const isOrbitLink = (node: EventTarget | null) =>
+  node instanceof Element && Boolean(node.closest('.orbit-link'));
 
 function runSnap(
   from: Gaze,
@@ -229,6 +210,7 @@ export default function Home() {
   const [reform, setReform] = useState<ReformRegion | null>(null);
   const [desyncRows, setDesyncRows] = useState<number[]>([]);
   const [glitchStrength, setGlitchStrength] = useState(0);
+  const [bootId, setBootId] = useState(0);
 
   const locked = useRef(false);
   const gazeRef = useRef<Gaze>({ x: 0, y: 0 });
@@ -237,6 +219,8 @@ export default function Home() {
   const dilateRaf = useRef(0);
   const idleTimer = useRef<number | undefined>(undefined);
   const eventTimer = useRef<number | undefined>(undefined);
+  const lookBackTimer = useRef<number | undefined>(undefined);
+  const bootReplayLock = useRef(false);
   const meshRef = useRef<ReturnType<typeof rasterEye>>(rasterEye({ gazeX: 0, gazeY: 0 }));
 
   const active = sections.find((section) => section.id === activeId);
@@ -282,6 +266,24 @@ export default function Home() {
     runSnap(gazeRef.current, target, pupilScale, reducedRef.current, snapRaf, applyGaze);
   };
 
+  const cancelLookBack = () => {
+    window.clearTimeout(lookBackTimer.current);
+  };
+
+  const scheduleLookBack = (delay: number) => {
+    cancelLookBack();
+    lookBackTimer.current = window.setTimeout(() => {
+      if (locked.current) return;
+      setActiveId(null);
+      setArmedId(null);
+      setGazeOffset({ x: 0, y: 0 });
+      setForcedGaze(null);
+      setPupilScale(1);
+      setInterfaceState((state) => (state === 'BOOTING' || state === 'TRANSITIONING' ? state : 'IDLE'));
+      snapGaze({ x: 0, y: 0 });
+    }, delay);
+  };
+
   const clearTransient = () => {
     setIdleEvent('');
     setMutations([]);
@@ -292,13 +294,15 @@ export default function Home() {
     setGlitchStrength(0);
   };
 
-  const restoreFromCache = () => {
+  const replayAwakening = () => {
+    if (bootReplayLock.current) return;
+    bootReplayLock.current = true;
     locked.current = false;
     window.cancelAnimationFrame(snapRaf.current);
     window.cancelAnimationFrame(dilateRaf.current);
     window.clearTimeout(idleTimer.current);
     window.clearTimeout(eventTimer.current);
-    clearReturnFlag();
+    cancelLookBack();
     gazeRef.current = { x: 0, y: 0 };
     setGaze({ x: 0, y: 0 });
     setGazeOffset({ x: 0, y: 0 });
@@ -311,7 +315,11 @@ export default function Home() {
     setPupilScale(1);
     setActiveId(null);
     setArmedId(null);
-    setInterfaceState('IDLE');
+    setBootId((id) => id + 1);
+    setInterfaceState('BOOTING');
+    window.setTimeout(() => {
+      bootReplayLock.current = false;
+    }, 80);
   };
 
   useEffect(() => {
@@ -322,34 +330,35 @@ export default function Home() {
     };
     updatePreference();
     query.addEventListener('change', updatePreference);
-    const bootTimer = window.setTimeout(
-      () => setInterfaceState((state) => (state === 'BOOTING' ? 'IDLE' : state)),
-      query.matches ? 0 : 1320,
-    );
-    const returnTimer = window.setTimeout(() => {
-      if (readReturnFlag() || locked.current) restoreFromCache();
-    }, 0);
 
     const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted || locked.current || readReturnFlag()) restoreFromCache();
+      if (event.persisted || locked.current) replayAwakening();
     };
     const onPopState = () => {
-      if (locked.current || readReturnFlag()) restoreFromCache();
+      if (locked.current) replayAwakening();
     };
 
     window.addEventListener('pageshow', onPageShow);
     window.addEventListener('popstate', onPopState);
 
     return () => {
-      window.clearTimeout(bootTimer);
-      window.clearTimeout(returnTimer);
       window.clearTimeout(idleTimer.current);
       window.clearTimeout(eventTimer.current);
+      cancelLookBack();
       query.removeEventListener('change', updatePreference);
       window.removeEventListener('pageshow', onPageShow);
       window.removeEventListener('popstate', onPopState);
     };
   }, []);
+
+  useEffect(() => {
+    const delay = reducedRef.current ? 0 : BOOT_MS;
+    const bootTimer = window.setTimeout(
+      () => setInterfaceState((state) => (state === 'BOOTING' ? 'IDLE' : state)),
+      delay,
+    );
+    return () => window.clearTimeout(bootTimer);
+  }, [bootId]);
 
   useEffect(() => {
     if (reducedMotion || interfaceState !== 'IDLE') {
@@ -391,6 +400,7 @@ export default function Home() {
     const section = sections.find((item) => item.id === id);
     if (!section) return;
     const changed = activeId !== id;
+    cancelLookBack();
     setActiveId(id);
     setArmedId(arm ? id : null);
     setInterfaceState(arm ? 'ARMED' : 'FOCUSED');
@@ -407,13 +417,14 @@ export default function Home() {
       setGlitchStrength(0);
       snapGaze(section.gaze);
     }
+    if (arm) scheduleLookBack(ARMED_LOOK_BACK_MS);
   };
 
   const clearFocus = () => {
     if (locked.current || armedId) return;
     setActiveId(null);
     setInterfaceState('IDLE');
-    snapGaze({ x: 0, y: 0 });
+    scheduleLookBack(LOOK_BACK_MS);
   };
 
   const beginTransition = (section: Section) => {
@@ -422,16 +433,25 @@ export default function Home() {
     window.clearTimeout(idleTimer.current);
     window.clearTimeout(eventTimer.current);
     window.cancelAnimationFrame(snapRaf.current);
+    cancelLookBack();
     clearTransient();
     setActiveId(section.id);
     setArmedId(null);
     setInterfaceState('TRANSITIONING');
     snapGaze(section.gaze);
-    writeReturnFlag();
 
     if (!reducedRef.current) runDilate(dilateRaf, setPupilScale);
 
     window.setTimeout(() => window.location.assign(section.href), reducedRef.current ? 70 : 740);
+  };
+
+  const dismissSelection = () => {
+    if (locked.current) return;
+    if (!activeId && !armedId) return;
+    setActiveId(null);
+    setArmedId(null);
+    setInterfaceState('IDLE');
+    scheduleLookBack(LOOK_BACK_MS);
   };
 
   const hasFinePointer = () => window.matchMedia('(hover: hover) and (pointer: fine)').matches;
@@ -474,7 +494,15 @@ export default function Home() {
     .join(' ');
 
   return (
-    <main className={className} style={rootStyle}>
+    <main
+      className={className}
+      style={rootStyle}
+      key={bootId}
+      onPointerDown={(event) => {
+        if ((event.target as Element | null)?.closest('.orbit-link')) return;
+        dismissSelection();
+      }}
+    >
       <div className="field-grain" aria-hidden="true" />
       <div className="faint-axis faint-axis--horizontal" aria-hidden="true" />
       <div className="faint-axis faint-axis--vertical" aria-hidden="true" />
@@ -502,12 +530,14 @@ export default function Home() {
               key={section.id}
               onMouseEnter={() => hasFinePointer() && activate(section.id)}
               onMouseLeave={(event) => {
-                const next = event.relatedTarget as Node | null;
-                if (next && event.currentTarget.parentElement?.contains(next)) return;
+                if (isOrbitLink(event.relatedTarget)) return;
                 clearFocus();
               }}
               onFocus={() => activate(section.id)}
-              onBlur={clearFocus}
+              onBlur={(event) => {
+                if (isOrbitLink(event.relatedTarget)) return;
+                clearFocus();
+              }}
               onClick={(event) => handleClick(event, section)}
               style={{ '--link-accent': section.color } as CSSProperties}
             >
