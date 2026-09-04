@@ -95,34 +95,34 @@ AsciiEye/
 
 ### Runtime source (read these first)
 
-| File | Role |
-| --- | --- |
-| `app/page.tsx` | Client landing page. Owns the UI state machine, section table, hover/tap/keyboard input, gaze snaps, idle event scheduler, and the collapse-into-pupil navigation transition. |
-| `app/eye/raster.ts` | Pure functions. Builds a 97×21 glyph mesh that looks like an almond eye, clamps the pupil so it stays inside the lids, and applies one-off glyph mutations for idle glitches. |
-| `app/eye/Eye.tsx` | Dumb renderer. Takes `rows` / `irisRows` / `desyncRows` and paints two stacked `<pre>` layers (shell + iris overlay). |
-| `app/eye/sections.ts` | Section table: labels, hrefs, accents, gaze targets. Visual/tab order is top-right to bottom-right. |
-| `app/eye/idle.ts` | Weighted idle events. Blinks are lid `clip-path`, not a scaled squash. |
-| `app/eye/motion.ts` | `runSnap` / `runDilate`. |
-| `app/globals.css` | Atmosphere. Background grain, right-edge nav, boot sequence, idle blinks, swallow transition, reduced-motion overrides, mobile layout. |
-| `app/layout.tsx` | Document shell and metadata. Set `NEXT_PUBLIC_SITE_URL` when you have a public origin; it defaults to `http://localhost:3000`. |
-| `app/live-page.tsx` | Shared placeholder for destination routes: section heading, `THIS IS LIVE`, and a back link. |
+| File                  | Role                                                                                                                                                                          |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/page.tsx`        | Client landing page. Owns the UI state machine, section table, hover/tap/keyboard input, gaze snaps, idle event scheduler, and the collapse-into-pupil navigation transition. |
+| `app/eye/raster.ts`   | Pure functions. Builds a 97×21 glyph mesh that looks like an almond eye, clamps the pupil so it stays inside the lids, and applies one-off glyph mutations for idle glitches. |
+| `app/eye/Eye.tsx`     | Dumb renderer. Takes `rows` / `irisRows` / `desyncRows` and paints two stacked `<pre>` layers (shell + iris overlay).                                                         |
+| `app/eye/sections.ts` | Section table: labels, hrefs, accents, gaze targets. Visual/tab order is top-right to bottom-right.                                                                           |
+| `app/eye/idle.ts`     | Weighted idle events. Blinks are lid `clip-path`, not a scaled squash.                                                                                                        |
+| `app/eye/motion.ts`   | `runSnap` / `runDilate`.                                                                                                                                                      |
+| `app/globals.css`     | Atmosphere. Background grain, right-edge nav, boot sequence, idle blinks, swallow transition, reduced-motion overrides, mobile layout.                                        |
+| `app/layout.tsx`      | Document shell and metadata. Set `NEXT_PUBLIC_SITE_URL` when you have a public origin; it defaults to `http://localhost:3000`.                                                |
+| `app/live-page.tsx`   | Shared destination body: grain field, a smaller watching eye, heading, `THIS IS LIVE`, back link.                                                                             |
 
 ### Destination stubs
 
 `about`, `projects`, `blog`, `music`, `greetings`, `photography` are real
 routes (`/about`, not `/about/`) with semantic links from the landing page.
-Each has its own document title and an `<h1>`, plus a back link to `/`.
-Visible copy is still `THIS IS LIVE`. That is intentional: v1 does not
-style section pages.
+Each uses `LivePage`: the same grain field, a smaller static eye looking
+toward BACK, and the section accent on the iris and back link. Visible copy
+is still `THIS IS LIVE`.
 
 ### Tooling you rarely touch
 
-| File | Role |
-| --- | --- |
-| `vite.config.ts` | Wires vinext (Next-on-Vite), the Cloudflare Vite plugin, and the leftover OpenAI Sites plugin so local `vinext dev` still boots. |
-| `.openai/hosting.json` | Project ids from the Sites scaffold. `d1` and `r2` are null; the file exists because `vite.config.ts` imports it. |
-| `next.config.ts` | Present because vinext is a Next API surface. Sets `trailingSlash: false`. |
-| `run` | The only command you need day to day. |
+| File                   | Role                                                                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `vite.config.ts`       | Wires vinext (Next-on-Vite), the Cloudflare Vite plugin, and the leftover OpenAI Sites plugin so local `vinext dev` still boots. |
+| `.openai/hosting.json` | Project ids from the Sites scaffold. `d1` and `r2` are null; the file exists because `vite.config.ts` imports it.                |
+| `next.config.ts`       | Present because vinext is a Next API surface. Sets `trailingSlash: false`.                                                       |
+| `run`                  | The only command you need day to day.                                                                                            |
 
 ### What was deleted, and why
 
@@ -147,12 +147,12 @@ Generated / local-only (gitignored): `node_modules/`, `.next/`, `.vinext/`,
 
 `app/page.tsx` keeps a single interface state:
 
-| State | Meaning |
-| --- | --- |
-| `BOOTING` | Opening animation (~1–1.3s). Menu links exist in the DOM the whole time. |
-| `IDLE` | Nothing selected. Eye looks forward and runs frequent blinks / glances. |
-| `FOCUSED` | Desktop hover or keyboard focus on a nav item. Eye has snapped to that node. |
-| `ARMED` | Mobile first tap. Same visual as focused, plus “TAP AGAIN”. |
+| State           | Meaning                                                                                      |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `BOOTING`       | Opening animation (~1–1.3s). Menu links exist in the DOM the whole time.                     |
+| `IDLE`          | Nothing selected. Eye looks forward and runs frequent blinks / glances.                      |
+| `FOCUSED`       | Desktop hover or keyboard focus on a nav item. Eye has snapped to that node; pupil pinches.  |
+| `ARMED`         | Mobile first tap. Same visual as focused, plus “TAP AGAIN”.                                  |
 | `TRANSITIONING` | Navigation committed. Input ignored. Pupil dilates, field collapses, then `location.assign`. |
 
 Conflicting events are dropped while `TRANSITIONING` (a `locked` ref).
@@ -160,9 +160,10 @@ Conflicting events are dropped while `TRANSITIONING` (a `locked` ref).
 ### The eye does not chase the cursor
 
 Gaze targets are discrete. Each section stores a `{ x, y }` in
-approximately `[-1, 1]`. Hover/focus/tap picks a section; the pupil eases
-to that target in ~140ms with a tiny overshoot. Raw mouse tracking is
-deliberately not implemented.
+approximately `[-1, 1]`. Hover/focus/tap picks a section; the pupil snaps
+past that target (~160ms) and corrects. Raw mouse tracking is deliberately
+not implemented. Hovering the glyph eye itself (not the cursor XY) pinches
+the pupil as if the pointer got too close.
 
 ### Raster
 
@@ -178,34 +179,37 @@ non-iris cells blanked, so the accent color can tint only the ring when a
 section is active.
 
 Idle events fire often (about 0.4–2s apart) so the eye feels watched-back:
-lid blinks (and occasional double-blinks), micro-saccades, combined
-blink+glance, glyph churn, row desync, a short wander, a sleepy droop,
-partial signal loss, reform, and a rare dilated stare. The old whole-mesh
-`scaleY` “slit” and opacity-dim are gone — a blink is a lid close.
+lid blinks (and occasional double-blinks), lid twitches, micro-saccades,
+combined blink+glance, glyph churn, row desync, compression, lower-lid
+drip, a short wander, sleepy / asymmetric droop, partial signal loss,
+a freeze-then-notice, reform, a phantom look into empty space, a rare
+lock back onto the last hovered section, and a rare dilated stare. A
+blink is a lid close. Idle timers pause while the tab is hidden.
 
 ### CSS variables (tune look without rewriting JS)
 
 Set on the landing `<main>` from React:
 
-| Variable | Meaning |
-| --- | --- |
-| `--background` | Near-black page ground |
-| `--eye-default` | Idle off-gold (`#C9B77A`) |
-| `--active-accent` | Current section color, or the default gold |
-| `--eye-x` / `--eye-y` | Current gaze (rasterized in JS; reserved for CSS effects) |
-| `--glitch-strength` | Desync row shift magnitude |
-| `--glow-strength` | Eye drop-shadow |
-| `--pull-x` / `--pull-y` | Swallow-transition streak direction |
+| Variable                | Meaning                                            |
+| ----------------------- | -------------------------------------------------- |
+| `--background`          | Near-black page ground                             |
+| `--eye-default`         | Idle off-gold (`#C9B77A`)                          |
+| `--active-accent`       | Current section color, or the default gold         |
+| `--eye-x` / `--eye-y`   | Current gaze (raster + grain/axis/glow offset)     |
+| `--glitch-strength`     | Desync row shift magnitude                         |
+| `--glow-strength`       | Eye drop-shadow                                    |
+| `--pull-x` / `--pull-y` | Swallow-transition streak direction                |
+| `--sight-angle`         | Active section orbit angle for the faint sightline |
 
 ### Section accents
 
-| Section | Color | Route |
-| --- | --- | --- |
-| ABOUT | `#00F7FF` | `/about` |
-| PROJECTS | `#39FF94` | `/projects` |
-| BLOG | `#CFFF4D` | `/blog` |
-| MUSIC | `#FF48FF` | `/music` |
-| GREETINGS | `#A259FF` | `/greetings` |
+| Section     | Color     | Route          |
+| ----------- | --------- | -------------- |
+| ABOUT       | `#00F7FF` | `/about`       |
+| PROJECTS    | `#39FF94` | `/projects`    |
+| BLOG        | `#CFFF4D` | `/blog`        |
+| MUSIC       | `#FF48FF` | `/music`       |
+| GREETINGS   | `#A259FF` | `/greetings`   |
 | PHOTOGRAPHY | `#4DA2FF` | `/photography` |
 
 Accents recolor the active link, the iris overlay, and a little glow. They
@@ -213,7 +217,11 @@ do not flood the whole screen.
 
 ### Interaction
 
-**Desktop** — hover previews (color + gaze snap). Click enters.
+**Desktop** — hover previews (color + gaze snap past the node + a 48ms
+label corruption). Unfocused links dim. A faint sightline runs from the
+pupil toward the active node. Click enters. Hovering the eye pinches the
+pupil and pauses idle. After the pointer leaves, the gaze holds ~5s, then
+snaps forward a beat later.
 
 **Mobile** — first tap selects and arms. Second tap on the same item
 navigates. Tapping a different item switches selection.
@@ -231,28 +239,31 @@ usable menu. Double-tap-to-arm is enhancement only.
 
 ### Boot and swallow
 
-Boot (~1s): black → faint line → split → glyphs reconstruct → menu fades
-in → idle.
+Boot (~1s): black → faint line → split → stray glyphs fall into the
+pupil → eye reconstructs → menu fades in → idle.
 
 Navigation (~600–900ms): lock input → other links vanish → gaze snap →
-pupil dilates → field pulls into the pupil → black → `window.location.assign`.
+one-frame invert → pupil dilates → field pulls into the pupil → black →
+`window.location.assign`.
 
 Returning via back/pageshow replays the boot awakening (`BOOTING` + a
-`bootId` remount) instead of leaving a stuck blackout.
+`bootId` remount) instead of leaving a stuck blackout. If the last
+committed section is in `sessionStorage`, the return boot is shorter and
+the eye is already looking at that node.
 
 ---
 
 ## Scripts
 
-| Command | What it does |
-| --- | --- |
-| `./run start` / `npm run up` | Background dev server |
-| `./run stop` / `npm run down` | Kill the dev server |
-| `npm run dev` | Foreground vinext dev (same server, stays in the terminal) |
-| `npm run build` | Production build to `dist/` |
-| `npm start` | Serve the production build via wrangler (needs `npm run build` first) |
-| `npm run lint` | oxlint |
-| `npm run format` | oxfmt |
+| Command                       | What it does                                                          |
+| ----------------------------- | --------------------------------------------------------------------- |
+| `./run start` / `npm run up`  | Background dev server                                                 |
+| `./run stop` / `npm run down` | Kill the dev server                                                   |
+| `npm run dev`                 | Foreground vinext dev (same server, stays in the terminal)            |
+| `npm run build`               | Production build to `dist/`                                           |
+| `npm start`                   | Serve the production build via wrangler (needs `npm run build` first) |
+| `npm run lint`                | oxlint                                                                |
+| `npm run format`              | oxfmt                                                                 |
 
 ---
 
@@ -261,13 +272,13 @@ Returning via back/pageshow replays the boot awakening (`BOOTING` + a
 This is a **vinext** app: Next.js App Router APIs running on **Vite**,
 previewed as a **Cloudflare Worker** through Wrangler.
 
-| Piece | Why it is here |
-| --- | --- |
-| React 19 + App Router | `app/` routes, metadata, client landing page |
-| vinext | `vinext dev` / `vinext build` instead of `next` |
-| Vite + `@cloudflare/vite-plugin` | Local worker-shaped preview |
-| `@openai/sites-vite-plugin` | Leftover from the Sites scaffold; still required by `vite.config.ts` |
-| IBM Plex Mono | Self-hosted `public/fonts/*.woff2`; fallbacks stay in the stack |
+| Piece                            | Why it is here                                                       |
+| -------------------------------- | -------------------------------------------------------------------- |
+| React 19 + App Router            | `app/` routes, metadata, client landing page                         |
+| vinext                           | `vinext dev` / `vinext build` instead of `next`                      |
+| Vite + `@cloudflare/vite-plugin` | Local worker-shaped preview                                          |
+| `@openai/sites-vite-plugin`      | Leftover from the Sites scaffold; still required by `vite.config.ts` |
+| IBM Plex Mono                    | Self-hosted `public/fonts/*.woff2`; fallbacks stay in the stack      |
 
 There is no Tailwind, no shadcn, no Three.js, no animation library. Motion
 is CSS keyframes plus short `requestAnimationFrame` snaps.
@@ -303,11 +314,11 @@ Not built yet, on purpose. See `docs/design-brief.md` §29.
 - Fake console chrome (`SYSTEM ONLINE`, username, diagnostics)
 - Hidden lore
 - Cursor-following eye
-- Styled destination pages
+- Filled destination content (pages share atmosphere; copy is still a stub)
 
 When you fill in a section, edit that route under `app/<section>/page.tsx`.
 You do not need to change the landing page unless the href or accent
-changes — those live in the `sections` array in `app/page.tsx`.
+changes — those live in `app/eye/sections.ts`.
 
 ---
 

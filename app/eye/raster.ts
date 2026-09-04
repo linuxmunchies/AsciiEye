@@ -1,10 +1,34 @@
 export const EYE_COLS = 97;
 export const EYE_ROWS = 21;
 
-export const FIELD_GLYPHS = ['.', '.', ':', ':', '|', '|', '-', '+', '+', '<', '>', '0', '1'] as const;
+export const FIELD_GLYPHS = [
+  '.',
+  '.',
+  ':',
+  ':',
+  '|',
+  '|',
+  '-',
+  '+',
+  '+',
+  '<',
+  '>',
+  '0',
+  '1',
+] as const;
 export const EDGE_GLYPHS = [':', '|', '-', '+', '<', '>', '1'] as const;
 export const IRIS_GLYPHS = ['0', '1', '|', ':', '+'] as const;
-export const MUTATION_GLYPHS = ['.', ':', '|', '-', '+', '<', '>', '0', '1'] as const;
+export const MUTATION_GLYPHS = [
+  '.',
+  ':',
+  '|',
+  '-',
+  '+',
+  '<',
+  '>',
+  '0',
+  '1',
+] as const;
 
 export type Gaze = { x: number; y: number };
 
@@ -40,7 +64,9 @@ const IRIS_RX = 0.36;
 const IRIS_RY = 0.76;
 
 function hash(x: number, y: number, salt = 0) {
-  const value = Math.sin((x + 3.1) * 12.9898 + (y + 7.7) * 78.233 + salt * 37.719) * 43758.5453;
+  const value =
+    Math.sin((x + 3.1) * 12.9898 + (y + 7.7) * 78.233 + salt * 37.719) *
+    43758.5453;
   return value - Math.floor(value);
 }
 
@@ -57,7 +83,11 @@ export function clampGaze(x: number, y: number, pupilScale = 1): Gaze {
   const pRx = PUPIL_RX * scale;
   const pRy = PUPIL_RY * scale;
   const gx = Math.max(-0.58, Math.min(0.58, x));
-  const almond = Math.min(almondHalf(gx), almondHalf(gx - pRx), almondHalf(gx + pRx));
+  const almond = Math.min(
+    almondHalf(gx),
+    almondHalf(gx - pRx),
+    almondHalf(gx + pRx),
+  );
   const maxY = Math.max(0.02, almond - pRy * 0.55);
   return { x: gx, y: Math.max(-maxY, Math.min(maxY, y)) };
 }
@@ -85,10 +115,10 @@ export function rasterEye({
       const x = (col / (EYE_COLS - 1)) * 2 - 1;
       const reforming = Boolean(
         reform &&
-          row >= reform.row0 &&
-          row <= reform.row1 &&
-          col >= reform.col0 &&
-          col <= reform.col1,
+        row >= reform.row0 &&
+        row <= reform.row1 &&
+        col >= reform.col0 &&
+        col <= reform.col1,
       );
       const salt = reforming && reform ? reform.salt : 0;
       const noise = (s = 0) => hash(col, row, s + salt);
@@ -96,7 +126,10 @@ export function rasterEye({
       const yAdj = y - x * 0.025;
       const inside = Math.abs(yAdj) <= half;
       const drip =
-        yAdj > half && yAdj < half + 0.14 && noise(11) < 0.08 && Math.abs(x) < 0.8;
+        yAdj > half &&
+        yAdj < half + 0.14 &&
+        noise(11) < 0.08 &&
+        Math.abs(x) < 0.8;
 
       if (!inside && !drip) {
         line += ' ';
@@ -106,7 +139,9 @@ export function rasterEye({
 
       const pupilDist = Math.hypot((x - gaze.x) / pRx, (yAdj - gaze.y) / pRy);
       const irisDist = Math.hypot((x - gaze.x) / iRx, (yAdj - gaze.y) / iRy);
-      const edge = inside ? Math.max(0, 1 - Math.abs(Math.abs(yAdj) - half) / 0.13) : 0;
+      const edge = inside
+        ? Math.max(0, 1 - Math.abs(Math.abs(yAdj) - half) / 0.13)
+        : 0;
       const lid = edge > 0.36;
 
       let density = 0;
@@ -148,7 +183,10 @@ export function rasterEye({
   return { rows, irisRows };
 }
 
-export function applyMutations(mesh: RasterMesh, mutations: Mutation[]): RasterMesh {
+export function applyMutations(
+  mesh: RasterMesh,
+  mutations: Mutation[],
+): RasterMesh {
   if (mutations.length === 0) return mesh;
 
   const rows = mesh.rows.map((row) => row.split(''));
@@ -157,7 +195,8 @@ export function applyMutations(mesh: RasterMesh, mutations: Mutation[]): RasterM
   for (const mutation of mutations) {
     const row = rows[mutation.row];
     const iris = irisRows[mutation.row];
-    if (!row || !iris || mutation.col < 0 || mutation.col >= row.length) continue;
+    if (!row || !iris || mutation.col < 0 || mutation.col >= row.length)
+      continue;
     if (mutation.char.length !== 1) continue;
     row[mutation.col] = mutation.char;
     if (mutation.char === ' ') iris[mutation.col] = ' ';
@@ -170,7 +209,9 @@ export function applyMutations(mesh: RasterMesh, mutations: Mutation[]): RasterM
   };
 }
 
-export function collectFilled(rows: string[]): Array<{ row: number; col: number }> {
+export function collectFilled(
+  rows: string[],
+): Array<{ row: number; col: number }> {
   const cells: Array<{ row: number; col: number }> = [];
   for (let row = 0; row < rows.length; row += 1) {
     const line = rows[row];

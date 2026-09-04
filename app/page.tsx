@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
 import { Eye } from './eye/Eye';
 import { firstIdleDelay, rollIdle } from './eye/idle';
@@ -14,14 +20,84 @@ import {
   type ReformRegion,
 } from './eye/raster';
 
-type InterfaceState = 'BOOTING' | 'IDLE' | 'FOCUSED' | 'ARMED' | 'TRANSITIONING';
+type InterfaceState =
+  | 'BOOTING'
+  | 'IDLE'
+  | 'FOCUSED'
+  | 'ARMED'
+  | 'TRANSITIONING';
 
-const LOOK_BACK_MS = 3200;
-const ARMED_LOOK_BACK_MS = 7000;
+const LOOK_BACK_MS = 5200;
+const ARMED_LOOK_BACK_MS = 8000;
 const BOOT_MS = 1500;
+const RECALL_BOOT_MS = 720;
+const LOOK_BACK_SNAP_MS = 480;
+const FOCUS_PUPIL = 0.86;
+const CLOSE_PUPIL = 0.78;
+const LAST_SECTION_KEY = 'ascii-eye:last-section';
+const RECALL_KEY = 'ascii-eye:recall';
+const CORRUPT_GLYPHS = ['0', '1', '#', '/', 'X', '+'] as const;
+
+const BOOT_MOTES = [
+  { ch: '.', x: '-22vw', y: '-11vh', delay: '0ms' },
+  { ch: ':', x: '16vw', y: '-18vh', delay: '70ms' },
+  { ch: '1', x: '-28vw', y: '8vh', delay: '120ms' },
+  { ch: '+', x: '24vw', y: '12vh', delay: '40ms' },
+  { ch: '0', x: '-8vw', y: '-20vh', delay: '160ms' },
+];
 
 const isOrbitLink = (node: EventTarget | null) =>
   node instanceof Element && Boolean(node.closest('.orbit-link'));
+
+const hasFinePointer = () =>
+  window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+const corruptLabel = (label: string) => {
+  if (label.length < 2) return label;
+  const chars = label.split('');
+  const index = 1 + Math.floor(Math.random() * (chars.length - 1));
+  chars[index] =
+    CORRUPT_GLYPHS[Math.floor(Math.random() * CORRUPT_GLYPHS.length)];
+  return chars.join('');
+};
+
+const readRecallSection = (): Section | null => {
+  try {
+    if (sessionStorage.getItem(RECALL_KEY) !== '1') return null;
+    const id = sessionStorage.getItem(LAST_SECTION_KEY);
+    return sections.find((section) => section.id === id) ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const subscribeVisibility = (onChange: () => void) => {
+  document.addEventListener('visibilitychange', onChange);
+  return () => document.removeEventListener('visibilitychange', onChange);
+};
+
+const subscribeNoop = () => () => {};
+
+const rememberSection = (id: string) => {
+  try {
+    sessionStorage.setItem(LAST_SECTION_KEY, id);
+    sessionStorage.setItem(RECALL_KEY, '1');
+  } catch {
+    /* private mode */
+  }
+};
+
+const hardwareLean = () => {
+  const connection = (
+    navigator as Navigator & { connection?: { saveData?: boolean } }
+  ).connection;
+  if (connection?.saveData) return true;
+  return (
+    typeof navigator.hardwareConcurrency === 'number' &&
+    navigator.hardwareConcurrency > 0 &&
+    navigator.hardwareConcurrency < 4
+  );
+};
 
 export default function Home() {
   const [interfaceState, setInterfaceState] =
@@ -38,6 +114,22 @@ export default function Home() {
   const [desyncRows, setDesyncRows] = useState<number[]>([]);
   const [glitchStrength, setGlitchStrength] = useState(0);
   const [bootId, setBootId] = useState(0);
+  const [recall, setRecall] = useState<Section | null>(null);
+  const [closeWatch, setCloseWatch] = useState(false);
+  const [corrupt, setCorrupt] = useState<{ id: string; text: string } | null>(
+    null,
+  );
+  const pageVisible = useSyncExternalStore(
+    subscribeVisibility,
+    () => !document.hidden,
+    () => true,
+  );
+  const lean = useSyncExternalStore(subscribeNoop, hardwareLean, () => false);
+  const storedRecall = useSyncExternalStore(
+    subscribeNoop,
+    readRecallSection,
+    () => null,
+  );
 
   const locked = useRef(false);
   const stateRef = useRef(interfaceState);
@@ -45,17 +137,27 @@ export default function Home() {
   const armedRef = useRef(armedId);
   const gazeRef = useRef<Gaze>({ x: 0, y: 0 });
   const reducedRef = useRef(false);
+  const lastGazeRef = useRef<Gaze | null>(null);
+  const closeWatchRef = useRef(false);
   const snapRaf = useRef(0);
   const dilateRaf = useRef(0);
   const idleTimer = useRef<number | undefined>(undefined);
   const eventTimer = useRef<number | undefined>(undefined);
+  const snapDelayTimer = useRef<number | undefined>(undefined);
   const lookBackTimer = useRef<number | undefined>(undefined);
+  const returnSnapTimer = useRef<number | undefined>(undefined);
   const navTimer = useRef<number | undefined>(undefined);
   const glitchTimer = useRef<number | undefined>(undefined);
+  const corruptTimer = useRef<number | undefined>(undefined);
   const bootReplayLock = useRef(false);
   const meshRef = useRef<ReturnType<typeof rasterEye>>(
     rasterEye({ gazeX: 0, gazeY: 0 }),
   );
+
+  if (storedRecall && recall?.id !== storedRecall.id) {
+    setRecall(storedRecall);
+    setGaze(storedRecall.gaze);
+  }
 
   const active = sections.find((section) => section.id === activeId);
   const drawnGaze = {
@@ -88,7 +190,8 @@ export default function Home() {
     '--glitch-strength': `${glitchStrength}`,
     '--pull-x': `${drawnGaze.x * 90}`,
     '--pull-y': `${drawnGaze.y * 36}`,
-    '--glow-strength': active ? '1' : '0.45',
+    '--glow-strength': active ? '1' : closeWatch ? '0.85' : '0.45',
+    '--sight-angle': `${active?.orbitAngle ?? 0}deg`,
   } as CSSProperties;
 
   const applyGaze = (next: Gaze) => {
@@ -96,19 +199,21 @@ export default function Home() {
     setGaze(next);
   };
 
-  const snapGaze = (target: Gaze) => {
+  const snapGaze = (target: Gaze, scale = 1, overshoot = 1.16) => {
     runSnap(
       gazeRef.current,
       target,
-      pupilScale,
+      scale,
       reducedRef.current,
       snapRaf,
       applyGaze,
+      overshoot,
     );
   };
 
   const cancelLookBack = () => {
     window.clearTimeout(lookBackTimer.current);
+    window.clearTimeout(returnSnapTimer.current);
   };
 
   const inputLocked = () => locked.current || interfaceState === 'BOOTING';
@@ -119,18 +224,29 @@ export default function Home() {
     glitchTimer.current = window.setTimeout(() => setGlitchStrength(0), 90);
   };
 
+  const flashCorrupt = (section: Section) => {
+    window.clearTimeout(corruptTimer.current);
+    setCorrupt({ id: section.id, text: corruptLabel(section.label) });
+    corruptTimer.current = window.setTimeout(() => setCorrupt(null), 48);
+  };
+
   const scheduleLookBack = (delay: number) => {
     cancelLookBack();
     lookBackTimer.current = window.setTimeout(() => {
       if (locked.current) return;
-      setActiveId(null);
-      setArmedId(null);
+      if (activeRef.current || armedRef.current) return;
+      if (closeWatchRef.current) return;
       setGazeOffset({ x: 0, y: 0 });
       setPupilScale(1);
       setInterfaceState((state) =>
         state === 'BOOTING' || state === 'TRANSITIONING' ? state : 'IDLE',
       );
-      snapGaze({ x: 0, y: 0 });
+      returnSnapTimer.current = window.setTimeout(() => {
+        if (locked.current || closeWatchRef.current || activeRef.current)
+          return;
+        if (stateRef.current !== 'IDLE') return;
+        snapGaze({ x: 0, y: 0 }, 1, 1.05);
+      }, LOOK_BACK_SNAP_MS);
     }, delay);
   };
 
@@ -151,8 +267,10 @@ export default function Home() {
     window.cancelAnimationFrame(dilateRaf.current);
     window.clearTimeout(idleTimer.current);
     window.clearTimeout(eventTimer.current);
+    window.clearTimeout(snapDelayTimer.current);
     window.clearTimeout(navTimer.current);
     window.clearTimeout(glitchTimer.current);
+    window.clearTimeout(corruptTimer.current);
     cancelLookBack();
     gazeRef.current = { x: 0, y: 0 };
     setGaze({ x: 0, y: 0 });
@@ -165,6 +283,10 @@ export default function Home() {
     setPupilScale(1);
     setActiveId(null);
     setArmedId(null);
+    setCloseWatch(false);
+    closeWatchRef.current = false;
+    setCorrupt(null);
+    setRecall(null);
     setBootId((id) => id + 1);
     setInterfaceState('BOOTING');
     window.setTimeout(() => {
@@ -176,7 +298,9 @@ export default function Home() {
     stateRef.current = interfaceState;
     activeRef.current = activeId;
     armedRef.current = armedId;
-  }, [interfaceState, activeId, armedId]);
+    gazeRef.current = gaze;
+    if (recall) lastGazeRef.current = recall.gaze;
+  }, [interfaceState, activeId, armedId, gaze, recall]);
 
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -206,8 +330,10 @@ export default function Home() {
     return () => {
       window.clearTimeout(idleTimer.current);
       window.clearTimeout(eventTimer.current);
+      window.clearTimeout(snapDelayTimer.current);
       window.clearTimeout(navTimer.current);
       window.clearTimeout(glitchTimer.current);
+      window.clearTimeout(corruptTimer.current);
       cancelLookBack();
       query.removeEventListener('change', updatePreference);
       window.removeEventListener('pageshow', onPageShow);
@@ -229,6 +355,8 @@ export default function Home() {
         document.activeElement.blur();
       setActiveId(null);
       setArmedId(null);
+      setPupilScale(1);
+      setInterfaceState('IDLE');
       scheduleLookBack(LOOK_BACK_MS);
     };
     window.addEventListener('keydown', onKeyDown);
@@ -236,26 +364,37 @@ export default function Home() {
   });
 
   useEffect(() => {
-    const delay = reducedRef.current ? 0 : BOOT_MS;
-    const bootTimer = window.setTimeout(
-      () =>
-        setInterfaceState((state) => (state === 'BOOTING' ? 'IDLE' : state)),
-      delay,
-    );
+    const recalling = Boolean(recall);
+    const delay = reducedRef.current ? 0 : recalling ? RECALL_BOOT_MS : BOOT_MS;
+    const bootTimer = window.setTimeout(() => {
+      setInterfaceState((state) => (state === 'BOOTING' ? 'IDLE' : state));
+      if (recalling) scheduleLookBack(LOOK_BACK_MS);
+      try {
+        sessionStorage.removeItem(RECALL_KEY);
+      } catch {
+        /* private mode */
+      }
+    }, delay);
     return () => window.clearTimeout(bootTimer);
-  }, [bootId]);
+  }, [bootId, recall]);
 
   useEffect(() => {
-    if (reducedMotion || interfaceState !== 'IDLE') {
+    if (
+      reducedMotion ||
+      interfaceState !== 'IDLE' ||
+      !pageVisible ||
+      closeWatch
+    ) {
       window.clearTimeout(idleTimer.current);
       window.clearTimeout(eventTimer.current);
+      window.clearTimeout(snapDelayTimer.current);
       return;
     }
 
     const schedule = (delay: number) => {
       idleTimer.current = window.setTimeout(() => {
-        if (locked.current) return;
-        const roll = rollIdle(meshRef.current.rows);
+        if (locked.current || closeWatchRef.current) return;
+        const roll = rollIdle(meshRef.current.rows, lastGazeRef.current);
         clearTransient();
         setIdleEvent(roll.className);
         setMutations(roll.mutations);
@@ -265,21 +404,48 @@ export default function Home() {
         setReform(roll.reform);
         if (roll.pupilScale !== null) setPupilScale(roll.pupilScale);
         if (roll.snapTo) {
-          runSnap(gazeRef.current, roll.snapTo, 1, reducedRef.current, snapRaf, (next) => {
-            gazeRef.current = next;
-            setGaze(next);
-          });
+          const fireSnap = () => {
+            if (locked.current || closeWatchRef.current) return;
+            if (stateRef.current !== 'IDLE') return;
+            runSnap(
+              gazeRef.current,
+              roll.snapTo as Gaze,
+              1,
+              reducedRef.current,
+              snapRaf,
+              applyGaze,
+              roll.snapOvershoot,
+            );
+          };
+          if (roll.snapDelay > 0) {
+            snapDelayTimer.current = window.setTimeout(
+              fireSnap,
+              roll.snapDelay,
+            );
+          } else {
+            fireSnap();
+          }
         }
 
         eventTimer.current = window.setTimeout(() => {
           if (locked.current) return;
           clearTransient();
-          if (roll.pupilScale !== null) setPupilScale(1);
-          if (roll.snapTo && stateRef.current === 'IDLE') {
-            runSnap(gazeRef.current, { x: 0, y: 0 }, 1, reducedRef.current, snapRaf, (next) => {
-              gazeRef.current = next;
-              setGaze(next);
-            });
+          if (roll.pupilScale !== null && !closeWatchRef.current)
+            setPupilScale(1);
+          if (
+            roll.snapTo &&
+            stateRef.current === 'IDLE' &&
+            !closeWatchRef.current
+          ) {
+            runSnap(
+              gazeRef.current,
+              { x: 0, y: 0 },
+              1,
+              reducedRef.current,
+              snapRaf,
+              applyGaze,
+              1.04,
+            );
           }
           schedule(roll.gap);
         }, roll.duration);
@@ -290,8 +456,9 @@ export default function Home() {
     return () => {
       window.clearTimeout(idleTimer.current);
       window.clearTimeout(eventTimer.current);
+      window.clearTimeout(snapDelayTimer.current);
     };
-  }, [reducedMotion, interfaceState]);
+  }, [reducedMotion, interfaceState, pageVisible, closeWatch]);
 
   const activate = (id: string, arm = false) => {
     if (inputLocked()) return;
@@ -299,20 +466,25 @@ export default function Home() {
     if (!section) return;
     const changed = activeId !== id;
     cancelLookBack();
+    setCloseWatch(false);
+    closeWatchRef.current = false;
     setActiveId(id);
     setArmedId(arm || armedId === id ? id : null);
     setInterfaceState(arm || armedId === id ? 'ARMED' : 'FOCUSED');
     window.clearTimeout(idleTimer.current);
     window.clearTimeout(eventTimer.current);
+    window.clearTimeout(snapDelayTimer.current);
     setGazeOffset({ x: 0, y: 0 });
     setReform(null);
-    if (interfaceState !== 'TRANSITIONING') setPupilScale(1);
+    lastGazeRef.current = section.gaze;
+    if (interfaceState !== 'TRANSITIONING') setPupilScale(FOCUS_PUPIL);
     if (changed) {
       setIdleEvent('');
       setDesyncRows([]);
       setMutations([]);
       pulseGlitch();
-      snapGaze(section.gaze);
+      flashCorrupt(section);
+      snapGaze(section.gaze, FOCUS_PUPIL, 1.2);
     }
     if (arm) scheduleLookBack(ARMED_LOOK_BACK_MS);
   };
@@ -320,6 +492,8 @@ export default function Home() {
   const clearFocus = () => {
     if (inputLocked() || armedId) return;
     setActiveId(null);
+    setPupilScale(1);
+    setInterfaceState('IDLE');
     scheduleLookBack(LOOK_BACK_MS);
   };
 
@@ -328,16 +502,21 @@ export default function Home() {
     locked.current = true;
     window.clearTimeout(idleTimer.current);
     window.clearTimeout(eventTimer.current);
+    window.clearTimeout(snapDelayTimer.current);
     window.clearTimeout(navTimer.current);
     window.cancelAnimationFrame(snapRaf.current);
     cancelLookBack();
     clearTransient();
+    rememberSection(section.id);
+    lastGazeRef.current = section.gaze;
     setActiveId(section.id);
     setArmedId(null);
+    setCloseWatch(false);
+    closeWatchRef.current = false;
     setInterfaceState('TRANSITIONING');
-    snapGaze(section.gaze);
+    snapGaze(section.gaze, FOCUS_PUPIL, 1.18);
 
-    if (!reducedRef.current) runDilate(dilateRaf, setPupilScale);
+    if (!reducedRef.current) runDilate(dilateRaf, setPupilScale, FOCUS_PUPIL);
 
     navTimer.current = window.setTimeout(
       () => window.location.assign(section.href),
@@ -350,11 +529,29 @@ export default function Home() {
     if (!activeId && !armedId) return;
     setActiveId(null);
     setArmedId(null);
+    setPupilScale(1);
+    setInterfaceState('IDLE');
     scheduleLookBack(LOOK_BACK_MS);
   };
 
-  const hasFinePointer = () =>
-    window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  const watchEye = (on: boolean) => {
+    if (inputLocked()) return;
+    if (!hasFinePointer()) return;
+    closeWatchRef.current = on;
+    setCloseWatch(on);
+    if (on) {
+      cancelLookBack();
+      window.clearTimeout(idleTimer.current);
+      window.clearTimeout(eventTimer.current);
+      window.clearTimeout(snapDelayTimer.current);
+      pulseGlitch();
+      setPupilScale(CLOSE_PUPIL);
+      if (!activeRef.current) snapGaze({ x: 0, y: 0 }, CLOSE_PUPIL, 1.12);
+    } else if (stateRef.current === 'IDLE' && !activeRef.current) {
+      setPupilScale(1);
+      scheduleLookBack(LOOK_BACK_MS);
+    }
+  };
 
   const handleClick = (
     event: MouseEvent<HTMLAnchorElement>,
@@ -398,6 +595,10 @@ export default function Home() {
     interfaceState === 'FOCUSED' && 'is-focused',
     interfaceState === 'ARMED' && 'is-armed',
     active && 'has-active',
+    recall && interfaceState === 'BOOTING' && 'is-recalling',
+    closeWatch && 'is-close',
+    lean && 'is-lean',
+    glitchStrength > 0.04 && 'has-glitch',
     idleEvent,
   ]
     .filter(Boolean)
@@ -417,12 +618,14 @@ export default function Home() {
       key={bootId}
       onPointerDown={(event) => {
         if ((event.target as Element | null)?.closest('.orbit-link')) return;
+        if ((event.target as Element | null)?.closest('.eye-stage')) return;
         dismissSelection();
       }}
     >
       <div className="field-grain" aria-hidden="true" />
       <div className="faint-axis faint-axis--horizontal" aria-hidden="true" />
       <div className="faint-axis faint-axis--vertical" aria-hidden="true" />
+      <div className="sightline" aria-hidden="true" />
       <div className="awakening-line" aria-hidden="true" />
       <div className="awakening-split awakening-split--up" aria-hidden="true" />
       <div
@@ -431,6 +634,22 @@ export default function Home() {
       />
       <div className="awakening-burst" aria-hidden="true" />
       <div className="awakening-scan" aria-hidden="true" />
+      <div className="awakening-glyphs" aria-hidden="true">
+        {BOOT_MOTES.map((mote) => (
+          <span
+            key={`${mote.ch}${mote.x}${mote.y}`}
+            style={
+              {
+                '--mote-x': mote.x,
+                '--mote-y': mote.y,
+                '--mote-delay': mote.delay,
+              } as CSSProperties
+            }
+          >
+            {mote.ch}
+          </span>
+        ))}
+      </div>
       <div className="blackout" aria-hidden="true" />
       <div className="convergence" aria-hidden="true" />
 
@@ -439,11 +658,17 @@ export default function Home() {
         {statusText}
       </div>
       <section className="eye-stage" aria-hidden="true">
-        <Eye
-          rows={mesh.rows}
-          irisRows={mesh.irisRows}
-          desyncRows={desyncRows}
-        />
+        <div
+          className="eye-watch"
+          onPointerEnter={() => watchEye(true)}
+          onPointerLeave={() => watchEye(false)}
+        >
+          <Eye
+            rows={mesh.rows}
+            irisRows={mesh.irisRows}
+            desyncRows={desyncRows}
+          />
+        </div>
       </section>
 
       <nav
@@ -481,12 +706,19 @@ export default function Home() {
                 clearFocus();
               }}
               onClick={(event) => handleClick(event, section)}
-              style={{ '--link-accent': section.color } as CSSProperties}
+              style={
+                {
+                  '--link-accent': section.color,
+                  '--orbit-angle': `${section.orbitAngle}deg`,
+                } as CSSProperties
+              }
             >
               <span className="link-marker" aria-hidden="true">
                 &gt;
               </span>
-              <span>{section.label}</span>
+              <span>
+                {corrupt?.id === section.id ? corrupt.text : section.label}
+              </span>
               <span className="link-fragment" aria-hidden="true">
                 ::
               </span>

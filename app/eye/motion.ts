@@ -7,6 +7,7 @@ export function runSnap(
   reduced: boolean,
   rafSlot: { current: number },
   apply: (gaze: Gaze) => void,
+  overshoot = 1.16,
 ) {
   const to = clampGaze(target.x, target.y, pupilScale);
   window.cancelAnimationFrame(rafSlot.current);
@@ -16,14 +17,21 @@ export function runSnap(
   }
 
   const started = performance.now();
-  const duration = 140;
+  const duration = 160;
+  const peak = Math.max(1, overshoot);
   const step = (now: number) => {
     const t = Math.min(1, (now - started) / duration);
     let k = t;
-    if (t < 0.5) k = (t / 0.5) * 1.06;
-    else if (t < 0.72) k = 1.06;
-    else k = 1.06 + (1 - 1.06) * ((t - 0.72) / 0.28);
-    const next = clampGaze(from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k, pupilScale);
+    if (peak > 1) {
+      if (t < 0.45) k = (t / 0.45) * peak;
+      else if (t < 0.64) k = peak;
+      else k = peak + (1 - peak) * ((t - 0.64) / 0.36);
+    }
+    const next = clampGaze(
+      from.x + (to.x - from.x) * k,
+      from.y + (to.y - from.y) * k,
+      pupilScale,
+    );
     apply(next);
     if (t < 1) rafSlot.current = window.requestAnimationFrame(step);
     else apply(to);
@@ -31,11 +39,17 @@ export function runSnap(
   rafSlot.current = window.requestAnimationFrame(step);
 }
 
-export function runDilate(rafSlot: { current: number }, apply: (scale: number) => void) {
+export function runDilate(
+  rafSlot: { current: number },
+  apply: (scale: number) => void,
+  from = 1,
+) {
   const started = performance.now();
+  const start = from;
+  const end = 3.6;
   const step = (now: number) => {
     const t = Math.min(1, (now - started) / 520);
-    apply(1 + t * t * 2.6);
+    apply(start + (end - start) * t * t);
     if (t < 1) rafSlot.current = window.requestAnimationFrame(step);
   };
   rafSlot.current = window.requestAnimationFrame(step);
