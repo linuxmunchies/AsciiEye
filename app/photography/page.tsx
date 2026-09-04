@@ -1,2 +1,7 @@
+import type { Metadata } from 'next';
 import { LivePage } from '../live-page';
-export default function PhotographyPage() { return <LivePage />; }
+
+export const metadata: Metadata = { title: 'Photography' };
+export default function PhotographyPage() {
+  return <LivePage title="PHOTOGRAPHY" />;
+}

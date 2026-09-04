@@ -1,2 +1,7 @@
+import type { Metadata } from 'next';
 import { LivePage } from '../live-page';
-export default function AboutPage() { return <LivePage />; }
+
+export const metadata: Metadata = { title: 'About' };
+export default function AboutPage() {
+  return <LivePage title="ABOUT" />;
+}

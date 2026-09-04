@@ -49,12 +49,16 @@ function almondHalf(x: number) {
 }
 
 function pick(glyphs: readonly string[], noise: number) {
-  return glyphs[Math.floor(noise * glyphs.length) % glyphs.length];
+  return glyphs[Math.floor(noise * glyphs.length)];
 }
 
 export function clampGaze(x: number, y: number, pupilScale = 1): Gaze {
-  const gx = Math.max(-0.64, Math.min(0.64, x));
-  const maxY = Math.max(0.02, almondHalf(gx) - PUPIL_RY * pupilScale * 0.82);
+  const scale = Math.min(pupilScale, 1.15);
+  const pRx = PUPIL_RX * scale;
+  const pRy = PUPIL_RY * scale;
+  const gx = Math.max(-0.58, Math.min(0.58, x));
+  const almond = Math.min(almondHalf(gx), almondHalf(gx - pRx), almondHalf(gx + pRx));
+  const maxY = Math.max(0.02, almond - pRy * 0.55);
   return { x: gx, y: Math.max(-maxY, Math.min(maxY, y)) };
 }
 
@@ -108,7 +112,7 @@ export function rasterEye({
       let density = 0;
       let isIris = false;
       if (lid) density = 0.92 + edge * 0.08;
-      else if (!inside) density = 0.22;
+      else if (!inside) density = 0.72;
       else if (pupilDist < 1) density = 0;
       else if (pupilDist < 1.18) {
         density = 0.97;
@@ -153,7 +157,8 @@ export function applyMutations(mesh: RasterMesh, mutations: Mutation[]): RasterM
   for (const mutation of mutations) {
     const row = rows[mutation.row];
     const iris = irisRows[mutation.row];
-    if (!row || mutation.col < 0 || mutation.col >= row.length) continue;
+    if (!row || !iris || mutation.col < 0 || mutation.col >= row.length) continue;
+    if (mutation.char.length !== 1) continue;
     row[mutation.col] = mutation.char;
     if (mutation.char === ' ') iris[mutation.col] = ' ';
     else if (iris[mutation.col] !== ' ') iris[mutation.col] = mutation.char;

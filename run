@@ -7,6 +7,7 @@ cd "$ROOT"
 
 RUN_DIR="$ROOT/.run"
 PID_FILE="$RUN_DIR/dev.pid"
+LOCK_DIR="$RUN_DIR/lock"
 LOG_FILE="$RUN_DIR/dev.log"
 PORT="${PORT:-3000}"
 CMD="${1:-start}"
@@ -42,6 +43,10 @@ read_pid() {
   fi
 }
 
+port_up() {
+  (echo >/dev/tcp/127.0.0.1/"$PORT") >/dev/null 2>&1
+}
+
 kill_tree() {
   local pid="$1"
   local child
@@ -51,19 +56,59 @@ kill_tree() {
   kill "$pid" 2>/dev/null || true
 }
 
-detect_url() {
-  if [[ -f "$LOG_FILE" ]]; then
-    grep -Eo 'https?://(localhost|127\.0\.0\.1):[0-9]+' "$LOG_FILE" | tail -n 1 || true
+kill_group() {
+  local pid="$1"
+  local pgid
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -n "$pgid" ]]; then
+    kill -- -"$pgid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 20); do
+      is_pid_alive "$pid" || return 0
+      sleep 0.1
+    done
+    kill -9 -- -"$pgid" 2>/dev/null || true
+  fi
+  kill_tree "$pid"
+  if is_pid_alive "$pid"; then
+    kill -9 "$pid" 2>/dev/null || true
   fi
 }
 
-wait_for_url() {
-  local i
-  for i in $(seq 1 80); do
-    local url
+acquire_lock() {
+  mkdir -p "$RUN_DIR"
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    return 0
+  fi
+  local pid
+  pid="$(read_pid)"
+  if is_pid_alive "$pid"; then
+    return 1
+  fi
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+}
+
+release_lock() {
+  rm -rf "$LOCK_DIR"
+}
+
+detect_url() {
+  if [[ -f "$LOG_FILE" ]]; then
+    grep -aEo 'https?://(localhost|127\.0\.0\.1):[0-9]+' "$LOG_FILE" | tail -n 1 || true
+  fi
+}
+
+wait_for_ready() {
+  local i url
+  for i in $(seq 1 120); do
     url="$(detect_url)"
     if [[ -n "$url" ]]; then
       printf '%s\n' "$url"
+      return 0
+    fi
+    if port_up; then
+      printf 'http://localhost:%s/\n' "$PORT"
       return 0
     fi
     sleep 0.25
@@ -89,19 +134,13 @@ stop() {
   pid="$(read_pid)"
   if ! is_pid_alive "$pid"; then
     rm -f "$PID_FILE"
+    release_lock
     echo "already stopped"
     return 0
   fi
-  kill_tree "$pid"
-  local i
-  for i in $(seq 1 20); do
-    is_pid_alive "$pid" || break
-    sleep 0.1
-  done
-  if is_pid_alive "$pid"; then
-    kill -9 "$pid" 2>/dev/null || true
-  fi
+  kill_group "$pid"
   rm -f "$PID_FILE"
+  release_lock
   echo "stopped"
 }
 
@@ -112,26 +151,35 @@ start() {
     echo "already running  pid=$pid  $(detect_url)"
     return 0
   fi
+  if port_up; then
+    echo "port $PORT is already serving  $(detect_url || echo "http://localhost:${PORT}/")"
+    return 0
+  fi
 
   if [[ ! -d "$ROOT/node_modules" ]]; then
     echo "installing dependencies…"
     npm install
   fi
 
-  mkdir -p "$RUN_DIR"
+  if ! acquire_lock; then
+    echo "already running  pid=$(read_pid)  $(detect_url)"
+    return 0
+  fi
+
   : >"$LOG_FILE"
 
   echo "starting AsciiEye on port $PORT…"
-  nohup env PORT="$PORT" npm run dev >>"$LOG_FILE" 2>&1 &
+  setsid env PORT="$PORT" NO_COLOR=1 FORCE_COLOR=0 npm run dev -- -p "$PORT" >>"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
 
   local url
-  if url="$(wait_for_url)"; then
+  if url="$(wait_for_ready)"; then
     echo "ready  $url"
     echo "stop with:  ./run stop"
   else
-    echo "started pid=$(read_pid) but no URL appeared yet"
+    echo "started pid=$(read_pid) but $PORT never answered"
     echo "check logs:  ./run logs"
+    stop
     return 1
   fi
 }

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { EYE_ROWS } from './raster';
 
 type EyeProps = {
   rows: string[];
@@ -6,7 +7,10 @@ type EyeProps = {
   desyncRows?: number[];
 };
 
-const CENTER_ROW = 10;
+const CENTER_ROW = (EYE_ROWS - 1) / 2;
+
+const rowClass = (index: number, desync: Set<number>) =>
+  `eye-row${desync.has(index) ? ' is-desync' : ''}`;
 
 export function Eye({ rows, irisRows, desyncRows = [] }: EyeProps) {
   const desync = new Set(desyncRows);
@@ -16,9 +20,13 @@ export function Eye({ rows, irisRows, desyncRows = [] }: EyeProps) {
       <pre className="eye-shell" aria-hidden="true">
         {rows.map((row, index) => (
           <span
-            className={`eye-row eye-row--${index + 1}${desync.has(index) ? ' is-desync' : ''}`}
+            className={rowClass(index, desync)}
             key={index}
-            style={{ '--row-from-center': Math.abs(index - CENTER_ROW) } as CSSProperties}
+            style={
+              {
+                '--row-from-center': Math.abs(index - CENTER_ROW),
+              } as CSSProperties
+            }
           >
             {row}
           </span>
@@ -27,9 +35,13 @@ export function Eye({ rows, irisRows, desyncRows = [] }: EyeProps) {
       <pre className="eye-iris" aria-hidden="true">
         {irisRows.map((row, index) => (
           <span
-            className={`eye-row eye-row--${index + 1}`}
+            className={rowClass(index, desync)}
             key={index}
-            style={{ '--row-from-center': Math.abs(index - CENTER_ROW) } as CSSProperties}
+            style={
+              {
+                '--row-from-center': Math.abs(index - CENTER_ROW),
+              } as CSSProperties
+            }
           >
             {row}
           </span>

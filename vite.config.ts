@@ -33,6 +33,25 @@ const localBindingConfig = {
     : [],
 };
 
+const isBuild =
+  process.argv.includes('build') || process.env.npm_lifecycle_event === 'build';
+
+if (isBuild) {
+  const publicUrl = process.env.NEXT_PUBLIC_SITE_URL ?? '';
+  if (!publicUrl) {
+    if (process.env.CI) {
+      throw new Error(
+        'Set NEXT_PUBLIC_SITE_URL=https://… before vinext build (Open Graph tags).',
+      );
+    }
+    console.warn(
+      '[ascii-eye] NEXT_PUBLIC_SITE_URL is unset; Open Graph URLs will use localhost.',
+    );
+  } else if (!publicUrl.startsWith('https://') && publicUrl !== 'http://localhost:3000') {
+    throw new Error('NEXT_PUBLIC_SITE_URL must be an https origin.');
+  }
+}
+
 export default defineConfig(async () => {
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
@@ -44,9 +63,12 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      port: Number(process.env.PORT) || 3000,
+      ...(isCodexSeatbeltSandbox
+        ? { watch: { useFsEvents: false, usePolling: true } }
+        : {}),
+    },
     plugins: [
       vinext(),
       sites(),

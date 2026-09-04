@@ -4,8 +4,9 @@ A personal landing page that behaves like a console noticing you.
 
 There is no hero copy, no tagline, no “SYSTEM ONLINE”. The viewport is a
 near-black field. In the middle sits a large glyph eye assembled from `. : | - +
-< > 0 1`. Around it, six section links orbit irregularly. Hover a link and the
-eye snaps its gaze toward that node. Click, and the interface collapses into
+< > 0 1`. The eye sits slightly left of center. Six section links stack down
+the right edge (top-right, right, bottom-right). Hover a link and the eye
+snaps its gaze toward that node. Click, and the interface collapses into
 the pupil before the destination page loads.
 
 This is v1 of a personal site. Destination routes are placeholders (`THIS IS
@@ -69,8 +70,11 @@ AsciiEye/
 │   ├── globals.css          All visual language (eye, orbit, boot, swallow)
 │   ├── live-page.tsx        Shared placeholder body for destination routes
 │   ├── eye/
-│   │   ├── Eye.tsx          Presentational glyph eye (rows + iris overlay + drips)
-│   │   └── raster.ts        Almond rasterizer, gaze clamp, mutations
+│   │   ├── Eye.tsx          Presentational glyph eye (shell + iris overlay)
+│   │   ├── raster.ts        Almond rasterizer, gaze clamp, mutations
+│   │   ├── sections.ts      Nav table (id, href, accent, gaze)
+│   │   ├── idle.ts          Weighted idle rolls (blink, saccade, churn, …)
+│   │   └── motion.ts        Gaze snap + swallow dilate rAF helpers
 │   ├── about/page.tsx       /about
 │   ├── projects/page.tsx    /projects
 │   ├── blog/page.tsx        /blog
@@ -80,7 +84,9 @@ AsciiEye/
 │
 ├── public/
 │   ├── favicon.svg          Tab icon
-│   └── og.png               Open Graph image
+│   ├── og.png               Open Graph image
+│   ├── _headers             nosniff / referrer / frame-ancestors / CSP
+│   └── fonts/               Self-hosted IBM Plex Mono (latin 400/500/600)
 │
 └── docs/
     ├── design-brief.md      Original v1 spec (the prompt this was built from)
@@ -93,17 +99,21 @@ AsciiEye/
 | --- | --- |
 | `app/page.tsx` | Client landing page. Owns the UI state machine, section table, hover/tap/keyboard input, gaze snaps, idle event scheduler, and the collapse-into-pupil navigation transition. |
 | `app/eye/raster.ts` | Pure functions. Builds a 97×21 glyph mesh that looks like an almond eye, clamps the pupil so it stays inside the lids, and applies one-off glyph mutations for idle glitches. |
-| `app/eye/Eye.tsx` | Dumb renderer. Takes `rows` / `irisRows` / `desyncRows` and paints two stacked `<pre>` layers plus hanging drip fragments. |
-| `app/globals.css` | Atmosphere. Background grain, orbital link positions, boot sequence, idle transforms, swallow transition, reduced-motion overrides, mobile layout. CSS variables are the live visual state. |
+| `app/eye/Eye.tsx` | Dumb renderer. Takes `rows` / `irisRows` / `desyncRows` and paints two stacked `<pre>` layers (shell + iris overlay). |
+| `app/eye/sections.ts` | Section table: labels, hrefs, accents, gaze targets. Visual/tab order is top-right to bottom-right. |
+| `app/eye/idle.ts` | Weighted idle events. Blinks are lid `clip-path`, not a scaled squash. |
+| `app/eye/motion.ts` | `runSnap` / `runDilate`. |
+| `app/globals.css` | Atmosphere. Background grain, right-edge nav, boot sequence, idle blinks, swallow transition, reduced-motion overrides, mobile layout. |
 | `app/layout.tsx` | Document shell and metadata. Set `NEXT_PUBLIC_SITE_URL` when you have a public origin; it defaults to `http://localhost:3000`. |
-| `app/live-page.tsx` | One-line placeholder used by every destination route so those pages stay in sync. |
+| `app/live-page.tsx` | Shared placeholder for destination routes: section heading, `THIS IS LIVE`, and a back link. |
 
 ### Destination stubs
 
 `about`, `projects`, `blog`, `music`, `greetings`, `photography` are real
-routes with semantic links from the landing page. They currently render
-`THIS IS LIVE` and nothing else. That is intentional: v1 does not style
-section pages.
+routes (`/about`, not `/about/`) with semantic links from the landing page.
+Each has its own document title and an `<h1>`, plus a back link to `/`.
+Visible copy is still `THIS IS LIVE`. That is intentional: v1 does not
+style section pages.
 
 ### Tooling you rarely touch
 
@@ -111,7 +121,7 @@ section pages.
 | --- | --- |
 | `vite.config.ts` | Wires vinext (Next-on-Vite), the Cloudflare Vite plugin, and the leftover OpenAI Sites plugin so local `vinext dev` still boots. |
 | `.openai/hosting.json` | Project ids from the Sites scaffold. `d1` and `r2` are null; the file exists because `vite.config.ts` imports it. |
-| `next.config.ts` | Present because vinext is a Next API surface. Empty on purpose. |
+| `next.config.ts` | Present because vinext is a Next API surface. Sets `trailingSlash: false`. |
 | `run` | The only command you need day to day. |
 
 ### What was deleted, and why
@@ -140,7 +150,7 @@ Generated / local-only (gitignored): `node_modules/`, `.next/`, `.vinext/`,
 | State | Meaning |
 | --- | --- |
 | `BOOTING` | Opening animation (~1–1.3s). Menu links exist in the DOM the whole time. |
-| `IDLE` | Nothing selected. Eye looks forward. Rare idle glitches may fire. |
+| `IDLE` | Nothing selected. Eye looks forward and runs frequent blinks / glances. |
 | `FOCUSED` | Desktop hover or keyboard focus on a nav item. Eye has snapped to that node. |
 | `ARMED` | Mobile first tap. Same visual as focused, plus “TAP AGAIN”. |
 | `TRANSITIONING` | Navigation committed. Input ignored. Pupil dilates, field collapses, then `location.assign`. |
@@ -167,9 +177,11 @@ The pupil is a hole (spaces). An iris overlay layer is the same mesh with
 non-iris cells blanked, so the accent color can tint only the ring when a
 section is active.
 
-Idle events mutate cells after raster: character churn, flicker-to-space,
-row desync, micro-saccades, compression, partial signal loss, slit, reform,
-and a rare direct stare.
+Idle events fire often (about 0.4–2s apart) so the eye feels watched-back:
+lid blinks (and occasional double-blinks), micro-saccades, combined
+blink+glance, glyph churn, row desync, a short wander, a sleepy droop,
+partial signal loss, reform, and a rare dilated stare. The old whole-mesh
+`scaleY` “slit” and opacity-dim are gone — a blink is a lid close.
 
 ### CSS variables (tune look without rewriting JS)
 
@@ -180,9 +192,8 @@ Set on the landing `<main>` from React:
 | `--background` | Near-black page ground |
 | `--eye-default` | Idle off-gold (`#C9B77A`) |
 | `--active-accent` | Current section color, or the default gold |
-| `--eye-x` / `--eye-y` | Current gaze |
-| `--eye-open` | Boot lid |
-| `--glitch-strength` | Desync magnitude |
+| `--eye-x` / `--eye-y` | Current gaze (rasterized in JS; reserved for CSS effects) |
+| `--glitch-strength` | Desync row shift magnitude |
 | `--glow-strength` | Eye drop-shadow |
 | `--pull-x` / `--pull-y` | Swallow-transition streak direction |
 
@@ -208,8 +219,8 @@ do not flood the whole screen.
 navigates. Tapping a different item switches selection.
 
 **Keyboard** — Tab moves between real `<a>` links. Focus is treated like
-hover. Enter commits the swallow transition. `:focus-visible` is styled,
-not removed.
+hover. Enter commits the swallow transition. Escape dismisses the current
+selection. `:focus-visible` is styled, not removed.
 
 **Reduced motion** — `prefers-reduced-motion: reduce` strips boot, idle
 glitches, overshoot, and the collapse animation. Navigation is almost
@@ -226,8 +237,8 @@ in → idle.
 Navigation (~600–900ms): lock input → other links vanish → gaze snap →
 pupil dilates → field pulls into the pupil → black → `window.location.assign`.
 
-Returning via back/pageshow resets to `IDLE` instead of leaving a stuck
-blackout.
+Returning via back/pageshow replays the boot awakening (`BOOTING` + a
+`bootId` remount) instead of leaving a stuck blackout.
 
 ---
 
@@ -256,7 +267,7 @@ previewed as a **Cloudflare Worker** through Wrangler.
 | vinext | `vinext dev` / `vinext build` instead of `next` |
 | Vite + `@cloudflare/vite-plugin` | Local worker-shaped preview |
 | `@openai/sites-vite-plugin` | Leftover from the Sites scaffold; still required by `vite.config.ts` |
-| IBM Plex Mono | Loaded from Google Fonts in `globals.css` |
+| IBM Plex Mono | Self-hosted `public/fonts/*.woff2`; fallbacks stay in the stack |
 
 There is no Tailwind, no shadcn, no Three.js, no animation library. Motion
 is CSS keyframes plus short `requestAnimationFrame` snaps.
@@ -275,10 +286,11 @@ gh repo create AsciiEye --public --source=. --remote=origin --push
 `--push` uses the account’s SSH git protocol. The existing `sites` remote
 is the original OpenAI Sites origin; leave it alone unless you want it gone.
 
-After a real public URL exists, set it for Open Graph:
+After a real public URL exists, set it at **build** time for Open Graph
+(`vinext` inlines `NEXT_PUBLIC_*`):
 
 ```bash
-NEXT_PUBLIC_SITE_URL=https://example.com
+NEXT_PUBLIC_SITE_URL=https://example.com npm run build
 ```
 
 ---
